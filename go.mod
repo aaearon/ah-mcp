@@ -1,4 +1,4 @@
-module github.com/mrserzhan/ah-mcp
+module github.com/aaearon/ah-mcp
 
 go 1.23.0
 

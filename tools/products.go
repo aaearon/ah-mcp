@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -22,6 +23,8 @@ func RegisterProductTools(s *server.MCPServer, deps Deps) {
 	registerGetProduct(s, deps)
 	registerGetProductsBulk(s, deps)
 	registerGetBonusOffers(s, deps)
+	registerGetSpotlightBonusProducts(s, deps)
+	registerGetBonusBox(s, deps)
 	registerGetBonusGroupProducts(s, deps)
 	registerGetLastChanceItems(s, deps)
 	registerSearchStores(s, deps)
@@ -906,6 +909,168 @@ func registerGetProduct(s *server.MCPServer, deps Deps) {
 		GlobalCache.Set(cacheKey, data, CacheTTLProduct)
 		LogInfo("ah_get_product", "id=%d nutri=%v duration=%v", productID, includeNutri, time.Since(start))
 		return mcp.NewToolResultText(string(data)), nil
+	})
+}
+
+// --- ah_get_spotlight_bonus_products ---
+
+func registerGetSpotlightBonusProducts(s *server.MCPServer, deps Deps) {
+	tool := mcp.NewTool("ah_get_spotlight_bonus_products",
+		mcp.WithTitleAnnotation("Albert Heijn: Spotlight Bonus Products"),
+		mcp.WithDescription(
+			"Get the curated 'spotlight' (featured) Albert Heijn bonus products. "+
+				"A smaller, hand-picked subset of bonus offers — distinct from ah_get_bonus_offers, which fetches every category. "+
+				"Returns id, bonus_segment_id, title, original_price, bonus_price, discount_percentage, bonus_mechanism.",
+		),
+		mcp.WithString("limit",
+			mcp.Description("Maximum number of results to return (default 20)"),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if !deps.IsAuthenticated() {
+			return notAuthResult(), nil
+		}
+		if err := refreshTokens(ctx, deps); err != nil {
+			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
+		}
+		c, err := deps.GetClient()
+		if err != nil {
+			return errResult(fmt.Sprintf("Client error: %v", err)), nil
+		}
+
+		limit := req.GetInt("limit", 20)
+		cacheKey := fmt.Sprintf("spotlight_bonus:%d", limit)
+		if cached, ok := GlobalCache.Get(cacheKey); ok {
+			return mcp.NewToolResultText(string(cached)), nil
+		}
+
+		products, err := c.GetSpotlightBonusProducts(ctx)
+		if err != nil {
+			return errResult(fmt.Sprintf("Failed to get spotlight bonus products: %v", err)), nil
+		}
+
+		type item struct {
+			ID                 int     `json:"id,omitempty"`
+			BonusSegmentID     string  `json:"bonus_segment_id,omitempty"`
+			Title              string  `json:"title"`
+			OriginalPrice      float64 `json:"original_price,omitempty"`
+			BonusPrice         float64 `json:"bonus_price"`
+			DiscountPercentage float64 `json:"discount_percentage,omitempty"`
+			BonusMechanism     string  `json:"bonus_mechanism,omitempty"`
+		}
+		results := make([]item, 0)
+		for _, p := range products {
+			if len(results) >= limit {
+				break
+			}
+			it := item{
+				ID:             p.ID,
+				BonusSegmentID: p.BonusSegmentID,
+				Title:          p.Title,
+				OriginalPrice:  p.Price.Was,
+				BonusPrice:     p.Price.Now,
+				BonusMechanism: p.BonusMechanism,
+			}
+			if p.Price.Was > 0 && p.Price.Now > 0 {
+				it.DiscountPercentage = (1 - p.Price.Now/p.Price.Was) * 100
+			}
+			results = append(results, it)
+		}
+		data, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			return errResult(fmt.Sprintf("marshal result: %v", err)), nil
+		}
+		GlobalCache.Set(cacheKey, data, CacheTTLBonus)
+		return mcp.NewToolResultText(string(data)), nil
+	})
+}
+
+// --- ah_get_bonus_box ---
+
+// bonusBoxItem mirrors appie-go's unexported bonusSectionResponse entry
+// (see appie-go/bonus.go:34-37): each entry is either a `product` (individual
+// item) or a `bonusGroup` (deal containing multiple products). The variant
+// payloads are kept as raw JSON so all fields — including images, nested
+// products, and any new fields AH adds — pass through to the caller.
+type bonusBoxItem struct {
+	Product    json.RawMessage `json:"product,omitempty"`
+	BonusGroup json.RawMessage `json:"bonusGroup,omitempty"`
+}
+
+type bonusBoxResponse struct {
+	SectionType          string         `json:"sectionType"`
+	SectionDescription   string         `json:"sectionDescription"`
+	BonusGroupOrProducts []bonusBoxItem `json:"bonusGroupOrProducts"`
+}
+
+// resolveBonusBoxDate maps the user's date arg to a YYYY-MM-DD value in Europe/Amsterdam.
+// Empty → Monday of the current week. "next" → Monday of next week.
+// Otherwise → the trimmed value is parsed verbatim as YYYY-MM-DD (no Monday enforcement).
+func resolveBonusBoxDate(arg string) (string, error) {
+	loc, err := time.LoadLocation("Europe/Amsterdam")
+	if err != nil {
+		loc = time.UTC
+	}
+	mondayOf := func(t time.Time) time.Time {
+		offset := (int(t.Weekday()) + 6) % 7
+		return time.Date(t.Year(), t.Month(), t.Day()-offset, 0, 0, 0, 0, t.Location())
+	}
+	s := strings.TrimSpace(arg)
+	switch strings.ToLower(s) {
+	case "":
+		return mondayOf(time.Now().In(loc)).Format("2006-01-02"), nil
+	case "next":
+		return mondayOf(time.Now().In(loc)).AddDate(0, 0, 7).Format("2006-01-02"), nil
+	default:
+		if _, err := time.Parse("2006-01-02", s); err != nil {
+			return "", fmt.Errorf("invalid date %q (expected YYYY-MM-DD, 'next', or empty): %w", arg, err)
+		}
+		return s, nil
+	}
+}
+
+func registerGetBonusBox(s *server.MCPServer, deps Deps) {
+	tool := mcp.NewTool("ah_get_bonus_box",
+		mcp.WithTitleAnnotation("Albert Heijn: Personal Bonus Box"),
+		mcp.WithDescription(
+			"Get personalized weekly Bonus Box offers for the authenticated member. "+
+				"Optional date: empty (default) = this week's Monday (Europe/Amsterdam), "+
+				"'next' = next week's Monday, or a literal 'YYYY-MM-DD'. "+
+				"Returns sectionType, sectionDescription, and a list of bonus groups with offer details.",
+		),
+		mcp.WithString("date",
+			mcp.Description("Optional. Empty for current week, 'next' for next week, or YYYY-MM-DD."),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if !deps.IsAuthenticated() {
+			return notAuthResult(), nil
+		}
+		if err := refreshTokens(ctx, deps); err != nil {
+			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
+		}
+		c, err := deps.GetClient()
+		if err != nil {
+			return errResult(fmt.Sprintf("Client error: %v", err)), nil
+		}
+
+		resolvedDate, err := resolveBonusBoxDate(req.GetString("date", ""))
+		if err != nil {
+			return errResult(err.Error()), nil
+		}
+
+		// Intentionally not cached: GlobalCache is process-wide and not scoped to
+		// the active member, so caching personalized Bonus Box data could leak
+		// one member's offers to another after a logout/login or token swap.
+		path := fmt.Sprintf(
+			"/mobile-services/bonuspage/v2/section/personal?application=AHWEBSHOP&date=%s",
+			url.QueryEscape(resolvedDate),
+		)
+		var resp bonusBoxResponse
+		if err := c.DoRequest(ctx, "GET", path, nil, &resp); err != nil {
+			return errResult(fmt.Sprintf("Failed to get personal bonus box: %v", err)), nil
+		}
+		return jsonResult(resp)
 	})
 }
 

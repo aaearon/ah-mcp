@@ -72,7 +72,7 @@ Authentication is handled entirely through a reverse-proxy OAuth flow — no tok
 ## Build from source
 
 ```bash
-git clone https://github.com/mrserzhan/ah-mcp
+git clone https://github.com/aaearon/ah-mcp
 cd ah-mcp
 go build -o ah-mcp .
 ```
@@ -241,6 +241,8 @@ Tokens are stored automatically at `/home/ah-mcp/.config/ah-mcp/tokens.json` —
 | `ah_search_products_filtered` | Search with optional `bonus=true` filter for on-sale items only. |
 | `ah_get_product` | Full detail for one product by ID. Add `include_nutritional_info=true` for calories, fat, protein, etc. |
 | `ah_get_bonus_offers` | All current bonus/promotional offers. Optional keyword filter. |
+| `ah_get_spotlight_bonus_products` | Curated featured/spotlight bonus subset. Optional `limit`. |
+| `ah_get_bonus_box` | Personalized weekly Bonus Box offers. Optional `date` (empty, `next`, or `YYYY-MM-DD`). |
 | `ah_get_bonus_group_products` | All products in a specific bonus deal group (e.g. "2+1 gratis"). Use `segment_id` from `ah_get_bonus_offers`. |
 | `ah_get_last_chance_items` | Vandaag-af / clearance items from a specific store. |
 | `ah_search_stores` | Find AH stores near a postal code (or your registered address). |
@@ -259,6 +261,7 @@ Tokens are stored automatically at `/home/ah-mcp/.config/ah-mcp/tokens.json` —
 
 | Tool | Description |
 |---|---|
+| `ah_get_fulfillments` | All open order fulfillments with full delivery slot, address, and status (unfiltered). |
 | `ah_get_order_history` | Upcoming delivery orders with status and modifiable flag. |
 | `ah_get_past_orders` | Past/delivered orders. |
 | `ah_get_order_details` | Full item list for a specific past or upcoming order. |
@@ -279,6 +282,7 @@ Tokens are stored automatically at `/home/ah-mcp/.config/ah-mcp/tokens.json` —
 | `ah_clear_shopping_list` | Remove all items from the list. Requires `confirm=yes`. |
 | `ah_shopping_list_to_order` | Move all unchecked product items from your list to the cart. |
 | `ah_get_favorite_lists` | List all named favourite lists with IDs. |
+| `ah_get_shopping_list_items` | Items inside a specific favourite list. Use `list_id` from `ah_get_favorite_lists`. |
 | `ah_add_to_favorite_list` | Add products to a named favourite list. |
 | `ah_remove_from_favorite_list` | Remove products from a named favourite list. |
 

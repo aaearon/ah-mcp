@@ -21,6 +21,7 @@ func RegisterBasketTools(s *server.MCPServer, deps Deps) {
 	registerClearShoppingList(s, deps)
 	registerShoppingListToOrder(s, deps)
 	registerGetFavoriteLists(s, deps)
+	registerGetShoppingListItems(s, deps)
 	registerAddToFavoriteList(s, deps)
 	registerRemoveFromFavoriteList(s, deps)
 }
@@ -758,5 +759,55 @@ func registerRemoveFromFavoriteList(s *server.MCPServer, deps Deps) {
 			return errResult(fmt.Sprintf("Failed to remove from favorite list: %v", err)), nil
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("Removed %d product(s) from favorite list %s.", len(productIDs), listID)), nil
+	})
+}
+
+// --- ah_get_shopping_list_items ---
+
+func registerGetShoppingListItems(s *server.MCPServer, deps Deps) {
+	tool := mcp.NewTool("ah_get_shopping_list_items",
+		mcp.WithTitleAnnotation("Albert Heijn: View Favourite List Items"),
+		mcp.WithDescription(
+			"Get the items inside a specific Albert Heijn favorite/saved list. "+
+				"Get list_id from ah_get_favorite_lists. "+
+				"Returns id, product_id, and quantity for each item.",
+		),
+		mcp.WithString("list_id",
+			mcp.Required(),
+			mcp.Description("Favorite list ID from ah_get_favorite_lists"),
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if !deps.IsAuthenticated() {
+			return notAuthResult(), nil
+		}
+		if err := refreshTokens(ctx, deps); err != nil {
+			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
+		}
+		c, err := deps.GetClient()
+		if err != nil {
+			return errResult(fmt.Sprintf("Client error: %v", err)), nil
+		}
+
+		listID := strings.TrimSpace(req.GetString("list_id", ""))
+		if listID == "" {
+			return errResult("list_id is required"), nil
+		}
+
+		items, err := c.GetShoppingListItems(ctx, listID)
+		if err != nil {
+			return errResult(fmt.Sprintf("Failed to get shopping list items: %v", err)), nil
+		}
+
+		type entry struct {
+			ID        string `json:"id"`
+			ProductID int    `json:"product_id,omitempty"`
+			Quantity  int    `json:"quantity"`
+		}
+		results := make([]entry, 0, len(items))
+		for _, it := range items {
+			results = append(results, entry{ID: it.ID, ProductID: it.ProductID, Quantity: it.Quantity})
+		}
+		return jsonResult(results)
 	})
 }
