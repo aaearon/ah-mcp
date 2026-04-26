@@ -393,6 +393,61 @@ Expect: URL → browser login → "Login successful! Connected as <Name>."
 
 ---
 
+---
+
+## 11. New tools (smoke tests)
+
+> Requires authenticated session. Run after `ah_login`.
+
+### 11.1 ah_get_fulfillments
+```
+Prompt: "Show my open delivery orders"
+Tool:   ah_get_fulfillments (no args)
+Expect: JSON array (may be empty []) with id, date, time_window, total_price, status, modifiable fields.
+```
+
+### 11.2 ah_get_spotlight_bonus_products
+```
+Prompt: "Show me spotlight bonus products"
+Tool:   ah_get_spotlight_bonus_products
+Expect: Non-empty array of bonus products with bonus_price and discount_percentage.
+        Try with limit=5 to verify truncation.
+```
+
+### 11.3 ah_get_bonus_box
+```
+Prompt: "Show my personal Bonus Box for this week"
+Tool:   ah_get_bonus_box (no date)
+Expect: sectionType, sectionDescription, bonusGroupOrProducts array.
+
+Prompt: "Show my Bonus Box for next week"
+Tool:   ah_get_bonus_box date="next"
+Expect: Different bonusStartDate/bonusEndDate than current week.
+
+Prompt: "Show my Bonus Box for 2026-05-05"
+Tool:   ah_get_bonus_box date="2026-05-05"
+Expect: Offers for that specific week.
+
+Error case: date="invalid"
+Expect: errResult with "invalid date" message.
+```
+
+### 11.4 ah_get_shopping_list_items
+```
+Step 1: Prompt: "List my favourite shopping lists"
+        Tool:   ah_get_favorite_lists
+        Note:   Copy a list_id from the results.
+
+Step 2: Prompt: "Show items in favourite list <id>"
+        Tool:   ah_get_shopping_list_items list_id="<id>"
+        Expect: Array of {id, product_id, quantity} entries.
+
+Error case: list_id=""
+Expect: errResult "list_id is required"
+```
+
+---
+
 ## Coverage summary
 
 > Tested: **Claude Desktop, stdio mode only.**
@@ -401,13 +456,13 @@ Expect: URL → browser login → "Login successful! Connected as <Name>."
 |---|---|---|
 | Auth | ah_login, ah_logout | ✅ |
 | Member | ah_get_member_profile | ✅ |
-| Products | ah_search_products, ah_search_products_filtered, ah_get_product, ah_get_bonus_offers, ah_get_bonus_group_products | ✅ |
+| Products | ah_search_products, ah_search_products_filtered, ah_get_product, ah_get_bonus_offers, ah_get_spotlight_bonus_products, ah_get_bonus_box, ah_get_bonus_group_products | ✅ |
 | Stores | ah_search_stores, ah_get_last_chance_items | ✅ |
-| Shopping list | ah_get_shopping_list, ah_add_to_shopping_list, ah_add_free_text_to_shopping_list, ah_remove_from_shopping_list, ah_clear_shopping_list, ah_shopping_list_to_order, ah_get_favorite_lists, ah_add_to_favorite_list, ah_remove_from_favorite_list | ✅ |
+| Shopping list | ah_get_shopping_list, ah_add_to_shopping_list, ah_add_free_text_to_shopping_list, ah_remove_from_shopping_list, ah_clear_shopping_list, ah_shopping_list_to_order, ah_get_favorite_lists, ah_get_shopping_list_items, ah_add_to_favorite_list, ah_remove_from_favorite_list | ✅ |
 | Shopping list | ah_check_shopping_list_item | ⚠️ broken (listItemId=0) |
 | Cart | ah_get_cart, ah_get_cart_summary, ah_update_cart_item, ah_remove_from_cart, ah_clear_cart | ✅ |
-| Order history | ah_get_order_history, ah_get_past_orders, ah_get_order_details, ah_get_frequent_items | ✅ |
+| Order history | ah_get_fulfillments, ah_get_order_history, ah_get_past_orders, ah_get_order_details, ah_get_frequent_items | ✅ |
 | Order editing | ah_reopen_order, ah_update_order_items, ah_revert_order | ⚠️ unconfirmed |
 | Receipts | ah_get_receipts, ah_get_receipt_details | ✅ |
 
-**Total: 28 tools**
+**Total: 32 tools**

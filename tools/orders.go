@@ -16,6 +16,7 @@ import (
 // RegisterOrderTools registers order-related MCP tools.
 func RegisterOrderTools(s *server.MCPServer, deps Deps) {
 	registerGetOrderHistory(s, deps)
+	registerGetFulfillments(s, deps)
 	registerGetPastOrders(s, deps)
 	registerGetOrderDetails(s, deps)
 	registerGetFrequentItems(s, deps)
@@ -957,5 +958,67 @@ func registerRevertOrder(s *server.MCPServer, deps Deps) {
 			"Order %d has been resubmitted. Your delivery is back on schedule.",
 			orderID,
 		)), nil
+	})
+}
+
+// --- ah_get_fulfillments ---
+
+func registerGetFulfillments(s *server.MCPServer, deps Deps) {
+	tool := mcp.NewTool("ah_get_fulfillments",
+		mcp.WithTitleAnnotation("Albert Heijn: Open Order Fulfillments"),
+		mcp.WithDescription(
+			"Get all open/upcoming Albert Heijn order fulfillments with full delivery slot, address, and status. "+
+				"Returns the raw fulfillment list — distinct from ah_get_order_history, which limits and reformats results. "+
+				"Each entry includes id, date, time_window, total_price, status, shopping_type, modifiable, " +
+				"delivery_method, and delivery_address_postal_code.",
+		),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		if !deps.IsAuthenticated() {
+			return notAuthResult(), nil
+		}
+		if err := refreshTokens(ctx, deps); err != nil {
+			return errResult(fmt.Sprintf("Token refresh failed: %v", err)), nil
+		}
+		c, err := deps.GetClient()
+		if err != nil {
+			return errResult(fmt.Sprintf("Client error: %v", err)), nil
+		}
+
+		fulfillments, err := c.GetFulfillments(ctx)
+		if err != nil {
+			return errResult(fmt.Sprintf("Failed to get fulfillments: %v", err)), nil
+		}
+
+		type entry struct {
+			ID                        int     `json:"id"`
+			Date                      string  `json:"date,omitempty"`
+			TimeWindow                string  `json:"time_window,omitempty"`
+			TotalPrice                float64 `json:"total_price"`
+			Status                    string  `json:"status"`
+			ShoppingType              string  `json:"shopping_type,omitempty"`
+			Modifiable                bool    `json:"modifiable"`
+			DeliveryMethod            string  `json:"delivery_method,omitempty"`
+			DeliveryAddressPostalCode string  `json:"delivery_address_postal_code,omitempty"`
+		}
+		results := make([]entry, 0, len(fulfillments))
+		for _, f := range fulfillments {
+			date := f.Delivery.Slot.DateDisplay
+			if date == "" {
+				date = f.Delivery.Slot.Date
+			}
+			results = append(results, entry{
+				ID:                        f.OrderID,
+				Date:                      date,
+				TimeWindow:                f.Delivery.Slot.TimeDisplay,
+				TotalPrice:                f.TotalPrice,
+				Status:                    f.StatusDescription,
+				ShoppingType:              f.ShoppingType,
+				Modifiable:                f.Modifiable,
+				DeliveryMethod:            f.Delivery.Method,
+				DeliveryAddressPostalCode: f.Delivery.Address.PostalCode,
+			})
+		}
+		return jsonResult(results)
 	})
 }
