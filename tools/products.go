@@ -987,21 +987,14 @@ func registerGetSpotlightBonusProducts(s *server.MCPServer, deps Deps) {
 
 // --- ah_get_bonus_box ---
 
-type bonusBoxBonusGroup struct {
-	ID                  string `json:"id"`
-	OfferID             int    `json:"offerId"`
-	SegmentDescription  string `json:"segmentDescription"`
-	DiscountDescription string `json:"discountDescription"`
-	Category            string `json:"category"`
-	PromotionType       string `json:"promotionType"`
-	SegmentType         string `json:"segmentType"`
-	ActivationStatus    string `json:"activationStatus"`
-	BonusStartDate      string `json:"bonusStartDate"`
-	BonusEndDate        string `json:"bonusEndDate"`
-}
-
+// bonusBoxItem mirrors appie-go's unexported bonusSectionResponse entry
+// (see appie-go/bonus.go:34-37): each entry is either a `product` (individual
+// item) or a `bonusGroup` (deal containing multiple products). The variant
+// payloads are kept as raw JSON so all fields — including images, nested
+// products, and any new fields AH adds — pass through to the caller.
 type bonusBoxItem struct {
-	BonusGroup bonusBoxBonusGroup `json:"bonusGroup"`
+	Product    json.RawMessage `json:"product,omitempty"`
+	BonusGroup json.RawMessage `json:"bonusGroup,omitempty"`
 }
 
 type bonusBoxResponse struct {
