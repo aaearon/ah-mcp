@@ -1010,8 +1010,9 @@ type bonusBoxResponse struct {
 	BonusGroupOrProducts []bonusBoxItem `json:"bonusGroupOrProducts"`
 }
 
-// resolveBonusBoxDate maps the user's date arg to a YYYY-MM-DD Monday in Europe/Amsterdam.
-// Empty → Monday of the current week. "next" → Monday of next week. Otherwise → parsed verbatim.
+// resolveBonusBoxDate maps the user's date arg to a YYYY-MM-DD value in Europe/Amsterdam.
+// Empty → Monday of the current week. "next" → Monday of next week.
+// Otherwise → the trimmed value is parsed verbatim as YYYY-MM-DD (no Monday enforcement).
 func resolveBonusBoxDate(arg string) (string, error) {
 	loc, err := time.LoadLocation("Europe/Amsterdam")
 	if err != nil {
@@ -1021,16 +1022,17 @@ func resolveBonusBoxDate(arg string) (string, error) {
 		offset := (int(t.Weekday()) + 6) % 7
 		return time.Date(t.Year(), t.Month(), t.Day()-offset, 0, 0, 0, 0, t.Location())
 	}
-	switch strings.ToLower(strings.TrimSpace(arg)) {
+	s := strings.TrimSpace(arg)
+	switch strings.ToLower(s) {
 	case "":
 		return mondayOf(time.Now().In(loc)).Format("2006-01-02"), nil
 	case "next":
 		return mondayOf(time.Now().In(loc)).AddDate(0, 0, 7).Format("2006-01-02"), nil
 	default:
-		if _, err := time.Parse("2006-01-02", arg); err != nil {
+		if _, err := time.Parse("2006-01-02", s); err != nil {
 			return "", fmt.Errorf("invalid date %q (expected YYYY-MM-DD, 'next', or empty): %w", arg, err)
 		}
-		return arg, nil
+		return s, nil
 	}
 }
 
@@ -1064,11 +1066,9 @@ func registerGetBonusBox(s *server.MCPServer, deps Deps) {
 			return errResult(err.Error()), nil
 		}
 
-		cacheKey := fmt.Sprintf("bonus_box:%s", resolvedDate)
-		if cached, ok := GlobalCache.Get(cacheKey); ok {
-			return mcp.NewToolResultText(string(cached)), nil
-		}
-
+		// Intentionally not cached: GlobalCache is process-wide and not scoped to
+		// the active member, so caching personalized Bonus Box data could leak
+		// one member's offers to another after a logout/login or token swap.
 		path := fmt.Sprintf(
 			"/mobile-services/bonuspage/v2/section/personal?application=AHWEBSHOP&date=%s",
 			url.QueryEscape(resolvedDate),
@@ -1077,13 +1077,7 @@ func registerGetBonusBox(s *server.MCPServer, deps Deps) {
 		if err := c.DoRequest(ctx, "GET", path, nil, &resp); err != nil {
 			return errResult(fmt.Sprintf("Failed to get personal bonus box: %v", err)), nil
 		}
-
-		data, err := json.MarshalIndent(resp, "", "  ")
-		if err != nil {
-			return errResult(fmt.Sprintf("marshal result: %v", err)), nil
-		}
-		GlobalCache.Set(cacheKey, data, CacheTTLBonus)
-		return mcp.NewToolResultText(string(data)), nil
+		return jsonResult(resp)
 	})
 }
 

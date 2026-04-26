@@ -393,8 +393,6 @@ Expect: URL → browser login → "Login successful! Connected as <Name>."
 
 ---
 
----
-
 ## 11. New tools (smoke tests)
 
 > Requires authenticated session. Run after `ah_login`.

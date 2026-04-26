@@ -967,10 +967,10 @@ func registerGetFulfillments(s *server.MCPServer, deps Deps) {
 	tool := mcp.NewTool("ah_get_fulfillments",
 		mcp.WithTitleAnnotation("Albert Heijn: Open Order Fulfillments"),
 		mcp.WithDescription(
-			"Get all open/upcoming Albert Heijn order fulfillments with full delivery slot, address, and status. "+
-				"Returns the raw fulfillment list — distinct from ah_get_order_history, which limits and reformats results. "+
-				"Each entry includes id, date, time_window, total_price, status, shopping_type, modifiable, " +
-				"delivery_method, and delivery_address_postal_code.",
+			"Get all open/upcoming Albert Heijn order fulfillments. "+
+				"Returns one entry per open fulfillment with id, date, time_window, total_price, status, "+
+				"shopping_type, modifiable, delivery_method, and delivery_address_postal_code (no street/city). "+
+				"Distinct from ah_get_order_history, which limits and reformats the same data.",
 		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
