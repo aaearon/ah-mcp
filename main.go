@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/mrserzhan/ah-mcp/tools"
+	"github.com/aaearon/ah-mcp/tools"
 )
 
 // version is set at build time via -ldflags="-X main.version=v1.2.3"
