@@ -240,7 +240,7 @@ Tokens are stored automatically at `/home/ah-mcp/.config/ah-mcp/tokens.json` —
 | `ah_search_products` | Search products by keyword (Dutch terms preferred). |
 | `ah_search_products_filtered` | Search with optional `bonus=true` filter for on-sale items only. |
 | `ah_get_product` | Full detail for one product by ID. Add `include_nutritional_info=true` for calories, fat, protein, etc. |
-| `ah_get_bonus_offers` | All current bonus/promotional offers. Optional keyword filter. |
+| `ah_get_bonus_offers` | Bonus/promotional offers. Optional `week='next'` to preview next week. Optional keyword filter. |
 | `ah_get_spotlight_bonus_products` | Curated featured/spotlight bonus subset. Optional `limit`. |
 | `ah_get_bonus_box` | Personalized weekly Bonus Box offers. Optional `date` (empty, `next`, or `YYYY-MM-DD`). |
 | `ah_get_bonus_group_products` | All products in a specific bonus deal group (e.g. "2+1 gratis"). Use `segment_id` from `ah_get_bonus_offers`. |

@@ -203,12 +203,165 @@ func registerGetBonusGroupProducts(s *server.MCPServer, deps Deps) {
 
 // --- ah_get_bonus_offers ---
 
+// Minimal types for the next-week bonus path. The upstream appie-go library
+// hardcodes today's date when fetching bonus sections, so we call the
+// /mobile-services/bonuspage endpoints directly via DoRequest with a future
+// date. The shapes mirror upstream's unexported productResponse /
+// bonusSectionResponse but only carry the fields ah_get_bonus_offers exposes.
+
+type nextWeekBonusProduct struct {
+	WebshopID        int     `json:"webshopId"`
+	Title            string  `json:"title"`
+	Brand            string  `json:"brand"`
+	SalesUnitSize    string  `json:"salesUnitSize"`
+	CurrentPrice     float64 `json:"currentPrice"`
+	PriceBeforeBonus float64 `json:"priceBeforeBonus"`
+	IsBonus          bool    `json:"isBonus"`
+	BonusMechanism   string  `json:"bonusMechanism"`
+	MainCategory     string  `json:"mainCategory"`
+}
+
+type nextWeekBonusGroup struct {
+	ID                  string                 `json:"id"`
+	SegmentDescription  string                 `json:"segmentDescription"`
+	DiscountDescription string                 `json:"discountDescription"`
+	Category            string                 `json:"category"`
+	ExampleFromPrice    float64                `json:"exampleFromPrice"`
+	ExampleForPrice     float64                `json:"exampleForPrice"`
+	Products            []nextWeekBonusProduct `json:"products"`
+}
+
+type nextWeekSection struct {
+	BonusGroupOrProducts []struct {
+		Product    *nextWeekBonusProduct `json:"product,omitempty"`
+		BonusGroup *nextWeekBonusGroup   `json:"bonusGroup,omitempty"`
+	} `json:"bonusGroupOrProducts"`
+}
+
+type nextWeekMetadata struct {
+	Periods []struct {
+		BonusStartDate string `json:"bonusStartDate"`
+		BonusEndDate   string `json:"bonusEndDate"`
+		Tabs           []struct {
+			URLMetadataList []struct {
+				BonusType   string `json:"bonusType"`
+				Description string `json:"description"`
+			} `json:"urlMetadataList"`
+		} `json:"tabs"`
+	} `json:"periods"`
+}
+
+func (p *nextWeekBonusProduct) toAppieProduct() appie.Product {
+	price := p.CurrentPrice
+	if price == 0 {
+		price = p.PriceBeforeBonus
+	}
+	return appie.Product{
+		ID:             p.WebshopID,
+		Title:          p.Title,
+		Brand:          p.Brand,
+		Category:       p.MainCategory,
+		Price:          appie.Price{Now: price, Was: p.PriceBeforeBonus},
+		IsBonus:        p.IsBonus,
+		BonusMechanism: p.BonusMechanism,
+		UnitSize:       p.SalesUnitSize,
+	}
+}
+
+// getNextWeekBonusProducts fetches bonus offers for the upcoming bonus period
+// by calling the metadata endpoint to discover next week's NATIONAL categories
+// and then aggregating each section with date={periodStart}. Returns the
+// products and the resolved period start date.
+func getNextWeekBonusProducts(ctx context.Context, c *appie.Client) ([]appie.Product, string, error) {
+	var meta nextWeekMetadata
+	if err := c.DoRequest(ctx, "GET", "/mobile-services/bonuspage/v3/metadata", nil, &meta); err != nil {
+		return nil, "", fmt.Errorf("get bonus metadata: %w", err)
+	}
+	today := time.Now().Format("2006-01-02")
+	periodIdx := -1
+	for i := range meta.Periods {
+		if meta.Periods[i].BonusStartDate > today {
+			periodIdx = i
+			break
+		}
+	}
+	if periodIdx == -1 {
+		return nil, "", fmt.Errorf("no upcoming bonus period available (today=%s)", today)
+	}
+	period := meta.Periods[periodIdx]
+
+	seenCat := make(map[string]bool)
+	seen := make(map[string]bool)
+	var products []appie.Product
+	for _, tab := range period.Tabs {
+		for _, m := range tab.URLMetadataList {
+			if m.BonusType != "NATIONAL" || seenCat[m.Description] {
+				continue
+			}
+			seenCat[m.Description] = true
+			params := url.Values{}
+			params.Set("application", "AHWEBSHOP")
+			params.Set("date", period.BonusStartDate)
+			params.Set("promotionType", "NATIONAL")
+			params.Set("category", m.Description)
+			path := "/mobile-services/bonuspage/v2/section?" + params.Encode()
+			var sec nextWeekSection
+			if err := c.DoRequest(ctx, "GET", path, nil, &sec); err != nil {
+				return nil, "", fmt.Errorf("get section %q: %w", m.Description, err)
+			}
+			for _, item := range sec.BonusGroupOrProducts {
+				if item.Product != nil {
+					p := item.Product.toAppieProduct()
+					key := fmt.Sprintf("%d:%s", p.ID, p.Title)
+					if !seen[key] {
+						seen[key] = true
+						products = append(products, p)
+					}
+					continue
+				}
+				if item.BonusGroup == nil {
+					continue
+				}
+				if len(item.BonusGroup.Products) > 0 {
+					for _, gp := range item.BonusGroup.Products {
+						p := gp.toAppieProduct()
+						key := fmt.Sprintf("%d:%s", p.ID, p.Title)
+						if !seen[key] {
+							seen[key] = true
+							products = append(products, p)
+						}
+					}
+					continue
+				}
+				p := appie.Product{
+					Title:          item.BonusGroup.SegmentDescription,
+					Category:       item.BonusGroup.Category,
+					BonusMechanism: item.BonusGroup.DiscountDescription,
+					IsBonus:        true,
+					BonusSegmentID: item.BonusGroup.ID,
+					Price: appie.Price{
+						Now: item.BonusGroup.ExampleForPrice,
+						Was: item.BonusGroup.ExampleFromPrice,
+					},
+				}
+				key := "0:" + p.Title
+				if !seen[key] {
+					seen[key] = true
+					products = append(products, p)
+				}
+			}
+		}
+	}
+	return products, period.BonusStartDate, nil
+}
+
 func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 	tool := mcp.NewTool("ah_get_bonus_offers",
 		mcp.WithTitleAnnotation("Albert Heijn: Bonus Offers"),
 		mcp.WithDescription(
-			"Get current Albert Heijn bonus/promotional offers. "+
+			"Get Albert Heijn bonus/promotional offers. "+
 				"Use this (not ah_search_products) when the user asks what is on bonus/sale/discount. "+
+				"Defaults to the current week; pass week='next' to preview next week's bonus once AH publishes it (typically a few days before the period starts). "+
 				"Supports optional keyword filter to find e.g. cheese on bonus: set query='kaas'. "+
 				"Group deals (e.g. '2+1 gratis', 'Alle yoghurt 25% korting') have id=0 and a non-empty bonus_segment_id — "+
 				"pass that to ah_get_bonus_group_products to see the individual products in the group. "+
@@ -219,6 +372,9 @@ func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 		),
 		mcp.WithString("query",
 			mcp.Description("Optional keyword filter (Dutch or English) applied client-side, e.g. 'kaas', 'vlees', 'bier'"),
+		),
+		mcp.WithString("week",
+			mcp.Description("'current' (default) or 'next' to preview next week's bonus offers"),
 		),
 	)
 	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -235,16 +391,45 @@ func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 
 		limit := req.GetInt("limit", 20)
 		query := strings.ToLower(req.GetString("query", ""))
+		week := strings.ToLower(strings.TrimSpace(req.GetString("week", "current")))
+		if week != "current" && week != "next" {
+			return errResult(fmt.Sprintf("invalid week %q (expected 'current' or 'next')", week)), nil
+		}
 
-		// GetBonusProducts fetches all categories and fails if any one errors.
-		// Fall back to spotlight (featured deals) on error so the tool always
-		// returns something useful.
-		products, err := c.GetBonusProducts(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Albert Heijn MCP] GetBonusProducts failed (%v), falling back to spotlight\n", err)
-			products, err = c.GetSpotlightBonusProducts(ctx)
+		var products []appie.Product
+		if week == "next" {
+			// Cache by a static "next" key. The cached payload is replaced when
+			// the TTL expires; if AH rolls into a new period inside that window
+			// the data may briefly point at the just-passed week, which is
+			// acceptable for a 30m staleness budget.
+			cacheKey := "bonus_offers:next"
+			if cached, ok := GlobalCache.Get(cacheKey); ok {
+				if uErr := json.Unmarshal(cached, &products); uErr != nil {
+					products = nil
+				}
+			}
+			if products == nil {
+				var periodStart string
+				products, periodStart, err = getNextWeekBonusProducts(ctx, c)
+				if err != nil {
+					return errResult(fmt.Sprintf("Failed to get next week's bonus offers: %v", err)), nil
+				}
+				LogInfo("ah_get_bonus_offers", "fetched next-week bonus period_start=%s products=%d", periodStart, len(products))
+				if data, mErr := json.Marshal(products); mErr == nil {
+					GlobalCache.Set(cacheKey, data, CacheTTLBonusNext)
+				}
+			}
+		} else {
+			// GetBonusProducts fetches all categories and fails if any one errors.
+			// Fall back to spotlight (featured deals) on error so the tool always
+			// returns something useful.
+			products, err = c.GetBonusProducts(ctx)
 			if err != nil {
-				return errResult(fmt.Sprintf("Failed to get bonus products: %v", err)), nil
+				fmt.Fprintf(os.Stderr, "[Albert Heijn MCP] GetBonusProducts failed (%v), falling back to spotlight\n", err)
+				products, err = c.GetSpotlightBonusProducts(ctx)
+				if err != nil {
+					return errResult(fmt.Sprintf("Failed to get bonus products: %v", err)), nil
+				}
 			}
 		}
 
