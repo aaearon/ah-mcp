@@ -274,10 +274,19 @@ func (p *nextWeekBonusProduct) toAppieProduct() appie.Product {
 // products and the resolved period start date.
 func getNextWeekBonusProducts(ctx context.Context, c *appie.Client) ([]appie.Product, string, error) {
 	var meta nextWeekMetadata
-	if err := c.DoRequest(ctx, "GET", "/mobile-services/bonuspage/v3/metadata", nil, &meta); err != nil {
+	if err := withRetry(ctx, "ah_get_bonus_offers", func() error {
+		return c.DoRequest(ctx, "GET", "/mobile-services/bonuspage/v3/metadata", nil, &meta)
+	}); err != nil {
 		return nil, "", fmt.Errorf("get bonus metadata: %w", err)
 	}
-	today := time.Now().Format("2006-01-02")
+	// AH publishes bonus periods in Europe/Amsterdam — comparing against the
+	// host's local timezone can shift the day boundary on UTC servers and
+	// either pick the wrong period or wrongly report "no upcoming period".
+	loc, locErr := time.LoadLocation("Europe/Amsterdam")
+	if locErr != nil {
+		loc = time.UTC
+	}
+	today := time.Now().In(loc).Format("2006-01-02")
 	periodIdx := -1
 	for i := range meta.Periods {
 		if meta.Periods[i].BonusStartDate > today {
@@ -306,7 +315,9 @@ func getNextWeekBonusProducts(ctx context.Context, c *appie.Client) ([]appie.Pro
 			params.Set("category", m.Description)
 			path := "/mobile-services/bonuspage/v2/section?" + params.Encode()
 			var sec nextWeekSection
-			if err := c.DoRequest(ctx, "GET", path, nil, &sec); err != nil {
+			if err := withRetry(ctx, "ah_get_bonus_offers", func() error {
+				return c.DoRequest(ctx, "GET", path, nil, &sec)
+			}); err != nil {
 				return nil, "", fmt.Errorf("get section %q: %w", m.Description, err)
 			}
 			for _, item := range sec.BonusGroupOrProducts {
@@ -405,6 +416,9 @@ func registerGetBonusOffers(s *server.MCPServer, deps Deps) {
 			cacheKey := "bonus_offers:next"
 			if cached, ok := GlobalCache.Get(cacheKey); ok {
 				if uErr := json.Unmarshal(cached, &products); uErr != nil {
+					// Drop the bad entry so we don't refetch on every call
+					// for the rest of the TTL window.
+					GlobalCache.Invalidate(cacheKey)
 					products = nil
 				}
 			}
