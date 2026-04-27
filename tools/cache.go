@@ -10,6 +10,10 @@ const (
 	CacheTTLSearch  = 5 * time.Minute
 	CacheTTLProduct = 10 * time.Minute
 	CacheTTLBonus   = 2 * time.Minute
+	// Next-week bonus data is stable and expensive to fetch (one HTTP call per
+	// NATIONAL category, ~25 categories), so it's cached longer than the
+	// current week.
+	CacheTTLBonusNext = 30 * time.Minute
 	CacheTTLStores  = 30 * time.Minute
 )
 

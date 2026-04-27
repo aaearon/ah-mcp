@@ -101,6 +101,18 @@ Tool:   ah_get_bonus_offers  query=yoghurt
 Expect: Bonus products whose title contains "yoghurt"
 ```
 
+### 4.2b Next week's bonus preview
+```
+Prompt: "What's on bonus next week at AH?"
+Tool:   ah_get_bonus_offers  week=next
+Expect: List of products for the upcoming bonus period (typically published a few days before the period starts).
+        First call may take several seconds (one HTTP request per NATIONAL category); subsequent calls within 30m hit the cache.
+        If AH has not yet published next week's bonus, expect an error referencing today's date.
+
+Error case: week=invalid
+Expect: errResult "invalid week ..."
+```
+
 ### 4.3 Drill into a bonus group
 ```
 Prereq: Note a bonus_segment_id from step 4.1 (only present on group-type promotions)
